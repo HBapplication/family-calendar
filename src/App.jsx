@@ -615,7 +615,7 @@ function LoginScreen({ authUser, isAdmin, onSignIn, onJoinFamily, onGoAdmin, onS
 
   const handleSignIn = async () => {
     setErr(""); setBusy(true);
-    try { await onSignIn(); } catch (e) { setErr("ההתחברות נכשלה — נסו שוב."); }
+    try { await onSignIn(); } catch (e) { console.error("Sign-in error:", e); setErr("ההתחברות נכשלה — נסו שוב. (" + (e?.code || e?.message || "") + ")"); }
     setBusy(false);
   };
 
@@ -623,7 +623,7 @@ function LoginScreen({ authUser, isAdmin, onSignIn, onJoinFamily, onGoAdmin, onS
     setErr("");
     if (!code.trim()) { setErr("יש להזין קוד משפחה"); return; }
     setBusy(true);
-    try { await onJoinFamily(code.trim()); } catch (e) { setErr("קרתה תקלה — נסו שוב."); }
+    try { await onJoinFamily(code.trim()); } catch (e) { console.error("Join family error:", e); setErr("קרתה תקלה — נסו שוב. (" + (e?.code || e?.message || "") + ")"); }
     setBusy(false);
   };
 
