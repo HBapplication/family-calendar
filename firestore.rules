@@ -1,0 +1,58 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() { return request.auth != null; }
+
+    function isSystemAdmin() {
+      return isSignedIn() &&
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid));
+    }
+
+    function isMember(familyId) {
+      return isSignedIn() &&
+        exists(/databases/$(database)/documents/families/$(familyId)/members/$(request.auth.uid));
+    }
+
+    function myRole(familyId) {
+      return get(/databases/$(database)/documents/families/$(familyId)/members/$(request.auth.uid)).data.role;
+    }
+
+    function isParent(familyId) {
+      return isMember(familyId) && myRole(familyId) == 'parent';
+    }
+
+    // A signed-in user may always read/write their own membership index,
+    // used to remember which families they belong to.
+    match /users/{uid} {
+      allow read, write: if isSignedIn() && request.auth.uid == uid;
+    }
+
+    // Only manageable via the Firebase console (or Admin SDK) — never from
+    // the client. This is what makes "system admin" a real, non-fakeable role.
+    match /admins/{uid} {
+      allow read: if isSignedIn() && request.auth.uid == uid;
+      allow write: if false;
+    }
+
+    match /families/{familyId} {
+      allow read: if isMember(familyId) || isSystemAdmin();
+      // anyone signed in may create a brand-new family (by typing a fresh code)
+      allow create: if isSignedIn();
+      allow update, delete: if isParent(familyId) || isSystemAdmin();
+
+      match /members/{memberId} {
+        allow read: if isMember(familyId) || isSystemAdmin();
+        // you may only ever create YOUR OWN membership doc (first sign-in
+        // into a family); nobody can create membership docs for others
+        allow create: if isSignedIn() && memberId == request.auth.uid;
+        allow update, delete: if isParent(familyId) || isSystemAdmin();
+      }
+
+      match /tasks/{taskId} {
+        allow read: if isMember(familyId) || isSystemAdmin();
+        allow create, update, delete: if isParent(familyId) || isSystemAdmin();
+      }
+    }
+  }
+}
