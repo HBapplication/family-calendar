@@ -5,7 +5,7 @@ import {
 } from "lucide-react";
 import {
   subscribeAuth, signInWithGoogle, signOutUser, isSystemAdmin,
-  listFamilies, getFamily, deleteFamily, getUserFamilies,
+  listFamilies, getFamily, createFamilyIfMissing, deleteFamily, getUserFamilies,
   getOrCreateMember, subscribeMembers, updateMemberRole, removeMember,
   subscribeTasks, saveTask, deleteTask,
 } from "./firebase";
