@@ -1,7 +1,7 @@
 // Firebase setup + all Firestore/Auth data-access functions.
 // Fill in `firebaseConfig` below with the values from:
 // Firebase Console → Project settings → General → "Your apps" → SDK setup and configuration.
-// See README.md for the full step-by-step.
+// See README-פריסה.md for the full step-by-step.
 
 import { initializeApp } from "firebase/app";
 import {
@@ -38,6 +38,10 @@ export function signOutUser() {
 }
 
 /* ---------------------------------- system admin ---------------------------------- */
+// Managed manually: add a document to the `admins` collection whose ID is
+// your Firebase Auth UID (Firebase Console → Authentication → Users, copy
+// the "User UID" after your first sign-in). No client can write this
+// themselves — see firestore.rules.
 export async function isSystemAdmin(uid) {
   const snap = await getDoc(doc(db, "admins", uid));
   return snap.exists();
@@ -54,10 +58,6 @@ export async function getFamily(familyId) {
   return snap.exists() ? { id: snap.id, ...snap.data() } : null;
 }
 
-// Returns { family, isNew } — isNew tells the caller whether THEY are the
-// one who just created this family (so they should become its first parent),
-// without ever needing to query the members list (which a brand-new user
-// isn't allowed to read yet).
 export async function createFamilyIfMissing(familyId) {
   const ref = doc(db, "families", familyId);
   const snap = await getDoc(ref);
@@ -78,6 +78,8 @@ export async function deleteFamily(familyId) {
 }
 
 /* ---------------------------------- membership index (per user) ---------------------------------- */
+// users/{uid} -> { families: [familyId, ...] } so a returning user skips
+// re-typing their family code.
 export async function getUserFamilies(uid) {
   const snap = await getDoc(doc(db, "users", uid));
   return snap.exists() ? (snap.data().families || []) : [];
@@ -87,6 +89,10 @@ async function linkUserToFamily(uid, familyId) {
 }
 
 /* ---------------------------------- members ---------------------------------- */
+// Member doc ID == Firebase Auth UID. This is what makes the security rules
+// work: a member can only ever create/claim *their own* doc. `isNewFamily`
+// tells us whether THIS caller just created the family (so they become its
+// first parent) without ever needing to query the members list.
 export async function getOrCreateMember(familyId, user, isNewFamily) {
   const ref = doc(db, "families", familyId, "members", user.uid);
   const snap = await getDoc(ref);
