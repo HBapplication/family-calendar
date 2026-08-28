@@ -6,7 +6,7 @@ import {
 import {
   subscribeAuth, signInWithGoogle, signOutUser, isSystemAdmin,
   listFamilies, getFamily, createFamilyIfMissing, deleteFamily, getUserFamilies,
-  getOrCreateMember, subscribeMembers, updateMemberRole, removeMember,
+  getOrCreateMember, subscribeMembers, updateMemberRole, updateMemberColor, removeMember,
   subscribeTasks, saveTask, deleteTask,
 } from "./firebase";
 
@@ -35,6 +35,7 @@ const TASK_COLORS = [
   "#2FB6CC", "#5AC08B", "#F0A44E", "#EE7CA0",
   "#8D82D6", "#F08A63", "#5C9EE8", "#F0CB4E",
 ];
+const UNASSIGNED_COLOR = "#9AA9AC";
 
 const WD_SHORT = ["א", "ב", "ג", "ד", "ה", "ו", "ש"];
 const WD_FULL = ["ראשון", "שני", "שלישי", "רביעי", "חמישי", "שישי", "שבת"];
@@ -90,6 +91,10 @@ function tasksForDate(tasks, dateObj) {
   return tasks.filter((t) => occursOnDate(t, dateObj)).sort((a, b) => (a.startTime || "").localeCompare(b.startTime || ""));
 }
 
+function colorForAssignee(assigneeId, memberColorMap) {
+  return (assigneeId && memberColorMap[assigneeId]) || UNASSIGNED_COLOR;
+}
+
 function timeToMin(t) { if (!t) return null; const [h, m] = t.split(":").map(Number); return h * 60 + m; }
 
 function layoutTimedTasks(dayTasks) {
@@ -129,7 +134,7 @@ function generateICS(tasks) {
   tasks.forEach((t) => {
     lines.push("BEGIN:VEVENT");
     lines.push("UID:" + t.id + "@family-calendar");
-    lines.push("SUMMARY:" + escapeICS(t.title + (t.assignee ? ` (${t.assignee})` : "")));
+    lines.push("SUMMARY:" + escapeICS(t.title + (t.assigneeName ? ` (${t.assigneeName})` : "")));
     if (t.notes) lines.push("DESCRIPTION:" + escapeICS(t.notes));
     if (t.startTime) {
       lines.push("DTSTART:" + t.startDate.replace(/-/g, "") + "T" + t.startTime.replace(":", "") + "00");
@@ -165,7 +170,7 @@ function googleCalendarUrl(task) {
   }
   const params = new URLSearchParams({
     action: "TEMPLATE",
-    text: task.title + (task.assignee ? ` (${task.assignee})` : ""),
+    text: task.title + (task.assigneeName ? ` (${task.assigneeName})` : ""),
     dates,
     details: task.notes || "",
     ctz: "Asia/Jerusalem",
@@ -228,8 +233,6 @@ function MonthView({ anchor, tasks, onDayClick, onTaskClick, onAddDay, canEdit }
           const inMonth = d.getMonth() === anchor.getMonth();
           const isToday = sameDay(d, today);
           const dayTasks = tasksForDate(tasks, d);
-          const shown = dayTasks.slice(0, 3);
-          const extra = dayTasks.length - shown.length;
           return (
             <div key={i} onClick={() => onDayClick(d)} style={{
               borderTop: `1px solid ${T.border}`, borderRight: (i % 7 !== 6) ? `1px solid ${T.border}` : "none",
@@ -249,11 +252,13 @@ function MonthView({ anchor, tasks, onDayClick, onTaskClick, onAddDay, canEdit }
                   }}>+</button>
                 )}
               </div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
-                {shown.map((t) => (
-                  <TaskChip key={t.id} task={t} occursTime={t.startTime} compact onClick={(e) => { e.stopPropagation(); onTaskClick(t, d); }} />
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 4, alignItems: "center" }}>
+                {dayTasks.slice(0, 10).map((t) => (
+                  <button key={t.id} onClick={(e) => { e.stopPropagation(); onTaskClick(t, d); }} title={t.title} style={{
+                    width: 10, height: 10, borderRadius: "50%", background: t.color, border: "none", cursor: "pointer", padding: 0, flexShrink: 0,
+                  }} />
                 ))}
-                {extra > 0 && <span style={{ fontSize: 11, color: T.textMuted, paddingRight: 4 }}>+{extra} עוד</span>}
+                {dayTasks.length > 10 && <span style={{ fontSize: 10, color: T.textMuted }}>+{dayTasks.length - 10}</span>}
               </div>
             </div>
           );
@@ -340,11 +345,52 @@ function TimeGrid({ days, tasks, onTaskClick }) {
   );
 }
 
-function WeekView({ anchor, tasks, onTaskClick }) {
+/* ---------------------------------- Week agenda (day below day) ---------------------------------- */
+function WeekAgendaView({ anchor, tasks, onTaskClick }) {
   const start = startOfWeek(anchor);
   const days = Array.from({ length: 7 }, (_, i) => addDays(start, i));
-  return <TimeGrid days={days} tasks={tasks} onTaskClick={onTaskClick} />;
+  const today = todayDate();
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+      {days.map((d, i) => {
+        const isToday = sameDay(d, today);
+        const dayTasks = tasksForDate(tasks, d);
+        return (
+          <div key={i} style={{
+            background: T.surface, borderRadius: 14, overflow: "hidden",
+            border: `1px solid ${isToday ? T.accent : T.border}`, boxShadow: T.shadow,
+          }}>
+            <div style={{
+              display: "flex", alignItems: "center", gap: 8, padding: "9px 14px",
+              background: isToday ? T.todayBg : T.surfaceAlt,
+            }}>
+              <span style={{ fontSize: 14, fontWeight: 800, color: isToday ? T.accentDark : T.text }}>{WD_FULL[d.getDay()]}</span>
+              <span style={{ fontSize: 12, color: T.textMuted }}>{d.getDate()} ב{MONTHS_HE[d.getMonth()]}</span>
+              {isToday && <span style={{ marginInlineStart: "auto", fontSize: 10.5, fontWeight: 700, color: "#fff", background: T.accent, borderRadius: 999, padding: "2px 8px" }}>היום</span>}
+            </div>
+            <div style={{ display: "flex", flexDirection: "column" }}>
+              {dayTasks.length === 0 ? (
+                <div style={{ padding: "10px 14px", fontSize: 12, color: T.textMuted }}>אין משימות ביום זה</div>
+              ) : dayTasks.map((t) => (
+                <button key={t.id} onClick={() => onTaskClick(t, d)} style={{
+                  display: "flex", alignItems: "center", gap: 10, width: "100%", textAlign: "right",
+                  padding: "9px 14px", border: "none", borderTop: `1px solid ${T.border}`, background: "transparent", cursor: "pointer",
+                }}>
+                  <span style={{ width: 11, height: 11, borderRadius: "50%", background: t.color, flexShrink: 0 }} />
+                  {t.startTime && <span style={{ fontSize: 11.5, color: T.textMuted, minWidth: 38, flexShrink: 0 }}>{t.startTime}</span>}
+                  <span style={{ fontSize: 13.5, fontWeight: 600, color: T.text, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.title}</span>
+                  {t.assigneeName && <span style={{ fontSize: 11, color: T.textMuted, flexShrink: 0 }}>{t.assigneeName}</span>}
+                </button>
+              ))}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
 }
+
 function DayView({ anchor, tasks, onTaskClick }) {
   return <TimeGrid days={[anchor]} tasks={tasks} onTaskClick={onTaskClick} />;
 }
@@ -365,7 +411,7 @@ const inputStyle = {
 
 /* ---------------------------------- Task edit modal (parent/admin) ---------------------------------- */
 const emptyTask = (dateISO) => ({
-  id: null, title: "", color: TASK_COLORS[0], assignee: "", notes: "",
+  id: null, title: "", assigneeId: "", notes: "",
   startDate: dateISO, endDate: dateISO, startTime: "", endTime: "",
   recurrence: "none", customDays: [],
 });
@@ -401,22 +447,15 @@ function TaskModal({ initial, members, onSave, onDelete, onClose }) {
             <input autoFocus value={form.title} onChange={(e) => set("title", e.target.value)} placeholder="לדוגמה: חוג כדורסל" style={inputStyle} />
           </Field>
 
-          <Field label="צבע">
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-              {TASK_COLORS.map((c) => (
-                <button key={c} onClick={() => set("color", c)} style={{
-                  width: 30, height: 30, borderRadius: "50%", background: c, cursor: "pointer",
-                  border: form.color === c ? `3px solid ${T.text}` : "3px solid transparent", outline: `1px solid ${T.border}`,
-                }} />
-              ))}
+          <Field label="אחראי/ת (קובע/ת את הצבע ביומן)">
+            <select value={form.assigneeId} onChange={(e) => set("assigneeId", e.target.value)} style={inputStyle}>
+              <option value="">ללא שיוך (צבע ניטרלי)</option>
+              {(members || []).map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+            </select>
+            <div style={{ display: "flex", gap: 6, marginTop: 8, alignItems: "center" }}>
+              <span style={{ width: 18, height: 18, borderRadius: "50%", background: colorForAssignee(form.assigneeId, Object.fromEntries((members || []).map((m) => [m.id, m.color]))) }} />
+              <span style={{ fontSize: 11.5, color: T.textMuted }}>הצבע נקבע לפי בן/בת המשפחה — ניתן לשנות ב"בני משפחה".</span>
             </div>
-          </Field>
-
-          <Field label="אחראי/ת (אופציונלי)">
-            <input list="members-list" value={form.assignee} onChange={(e) => set("assignee", e.target.value)} placeholder="לדוגמה: אמא, אבא, נועה" style={inputStyle} />
-            <datalist id="members-list">
-              {(members || []).map((m) => <option key={m.id} value={m.name} />)}
-            </datalist>
           </Field>
 
           <Field label="חזרתיות">
@@ -469,7 +508,7 @@ function TaskModal({ initial, members, onSave, onDelete, onClose }) {
           </Field>
 
           {form.title && form.startDate && (
-            <a href={googleCalendarUrl({ ...form, id: form.id || "tmp" })} target="_blank" rel="noreferrer" style={{
+            <a href={googleCalendarUrl({ ...form, id: form.id || "tmp", assigneeName: (members || []).find((m) => m.id === form.assigneeId)?.name })} target="_blank" rel="noreferrer" style={{
               display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "9px 12px",
               borderRadius: 10, border: `1px solid ${T.border}`, color: T.accentDark, textDecoration: "none", fontSize: 13, fontWeight: 600,
             }}>
@@ -514,7 +553,7 @@ function TaskViewModal({ task, onClose }) {
             <h3 style={{ margin: 0, fontFamily: "Quicksand, sans-serif", fontSize: 19, color: T.text }}>{task.title}</h3>
             <IconBtn onClick={onClose} title="סגור"><X size={18} /></IconBtn>
           </div>
-          {task.assignee && <div style={{ fontSize: 13, color: T.textMuted }}>אחראי/ת: <b style={{ color: T.text }}>{task.assignee}</b></div>}
+          {task.assigneeName && <div style={{ fontSize: 13, color: T.textMuted }}>אחראי/ת: <b style={{ color: T.text }}>{task.assigneeName}</b></div>}
           <div style={{ fontSize: 13, color: T.textMuted }}>
             {task.recurrence === "none" ? task.startDate : `${task.startDate} עד ${task.endDate} · ${recurrenceLabel}`}
           </div>
@@ -534,6 +573,7 @@ function TaskViewModal({ task, onClose }) {
 function MembersModal({ family, members, currentMember, onClose }) {
   const [copied, setCopied] = useState(false);
   const [busyId, setBusyId] = useState(null);
+  const [colorPickerFor, setColorPickerFor] = useState(null);
 
   const handleSetRole = async (id, role) => {
     const parentsLeft = members.filter((m) => m.role === "parent" && m.id !== id).length;
@@ -544,6 +584,13 @@ function MembersModal({ family, members, currentMember, onClose }) {
     setBusyId(id);
     await updateMemberRole(family.id, id, role);
     setBusyId(null);
+  };
+
+  const handleSetColor = async (id, color) => {
+    setBusyId(id);
+    await updateMemberColor(family.id, id, color);
+    setBusyId(null);
+    setColorPickerFor(null);
   };
 
   const handleRemove = async (id) => {
@@ -569,7 +616,7 @@ function MembersModal({ family, members, currentMember, onClose }) {
         boxShadow: "0 12px 40px rgba(20,60,65,0.25)", border: `1px solid ${T.border}`,
       }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "16px 18px", borderBottom: `1px solid ${T.border}` }}>
-          <h3 style={{ margin: 0, fontFamily: "Quicksand, sans-serif", fontSize: 18 }}>בני משפחה</h3>
+          <h3 style={{ margin: 0, fontFamily: "Quicksand, sans-serif", fontSize: 18 }}>בני משפחה וצבעים</h3>
           <IconBtn onClick={onClose} title="סגור"><X size={18} /></IconBtn>
         </div>
 
@@ -580,23 +627,40 @@ function MembersModal({ family, members, currentMember, onClose }) {
               <code style={{ background: "#fff", border: `1px solid ${T.border}`, borderRadius: 8, padding: "6px 10px", fontSize: 13.5, fontWeight: 700, flex: 1 }}>{family.id}</code>
               <IconBtn onClick={copyCode} title="העתקה">{copied ? <Check size={16} /> : <Copy size={16} />}</IconBtn>
             </div>
-            <div style={{ fontSize: 11, color: T.textMuted, marginTop: 6 }}>חברי משפחה חדשים מצטרפים כברירת מחדל בהרשאת "ילד/ה" — ניתן לשדרג להורה כאן, לאחר שהצטרפו בפעם הראשונה.</div>
+            <div style={{ fontSize: 11, color: T.textMuted, marginTop: 6 }}>לכל בן משפחה יש צבע קבוע שמופיע אוטומטית בכל המשימות שלו/שלה ביומן — אפשר לשנות אותו כאן בכל עת.</div>
           </div>
 
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             {members.map((m) => (
-              <div key={m.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", background: T.bgSoft, borderRadius: 10, opacity: busyId === m.id ? 0.6 : 1 }}>
-                <span style={{ flex: 1 }}>
-                  <span style={{ fontSize: 13.5, fontWeight: 600 }}>{m.name}{m.id === currentMember?.id ? " (את/ה)" : ""}</span>
-                  {m.email && <span style={{ display: "block", fontSize: 10.5, color: T.textMuted }}>{m.email}</span>}
-                </span>
-                <select disabled={busyId === m.id} value={m.role} onChange={(e) => handleSetRole(m.id, e.target.value)} style={{ ...inputStyle, width: "auto", padding: "5px 8px", fontSize: 12.5 }}>
-                  <option value="parent">הורה</option>
-                  <option value="child">ילד/ה</option>
-                </select>
-                <button disabled={busyId === m.id} onClick={() => handleRemove(m.id)} title="הסרה" style={{ border: "none", background: "transparent", color: T.danger, cursor: "pointer" }}>
-                  <Trash2 size={16} />
-                </button>
+              <div key={m.id} style={{ background: T.bgSoft, borderRadius: 10, opacity: busyId === m.id ? 0.6 : 1 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 10px" }}>
+                  <button
+                    onClick={() => setColorPickerFor(colorPickerFor === m.id ? null : m.id)}
+                    title="שינוי צבע"
+                    style={{ width: 22, height: 22, borderRadius: "50%", background: m.color || UNASSIGNED_COLOR, border: `2px solid ${T.surface}`, outline: `1px solid ${T.border}`, cursor: "pointer", flexShrink: 0 }}
+                  />
+                  <span style={{ flex: 1 }}>
+                    <span style={{ fontSize: 13.5, fontWeight: 600 }}>{m.name}{m.id === currentMember?.id ? " (את/ה)" : ""}</span>
+                    {m.email && <span style={{ display: "block", fontSize: 10.5, color: T.textMuted }}>{m.email}</span>}
+                  </span>
+                  <select disabled={busyId === m.id} value={m.role} onChange={(e) => handleSetRole(m.id, e.target.value)} style={{ ...inputStyle, width: "auto", padding: "5px 8px", fontSize: 12.5 }}>
+                    <option value="parent">הורה</option>
+                    <option value="child">ילד/ה</option>
+                  </select>
+                  <button disabled={busyId === m.id} onClick={() => handleRemove(m.id)} title="הסרה" style={{ border: "none", background: "transparent", color: T.danger, cursor: "pointer" }}>
+                    <Trash2 size={16} />
+                  </button>
+                </div>
+                {colorPickerFor === m.id && (
+                  <div style={{ display: "flex", gap: 7, flexWrap: "wrap", padding: "0 10px 10px" }}>
+                    {TASK_COLORS.map((c) => (
+                      <button key={c} onClick={() => handleSetColor(m.id, c)} style={{
+                        width: 24, height: 24, borderRadius: "50%", background: c, cursor: "pointer",
+                        border: (m.color || UNASSIGNED_COLOR) === c ? `2px solid ${T.text}` : "2px solid transparent", outline: `1px solid ${T.border}`,
+                      }} />
+                    ))}
+                  </div>
+                )}
               </div>
             ))}
             {members.length === 0 && <div style={{ fontSize: 12.5, color: T.textMuted, textAlign: "center", padding: 10 }}>עדיין אין בני משפחה רשומים.</div>}
@@ -728,14 +792,48 @@ function FamilyApp({ family, member, isAdminView, onLogout, onBackToAdmin }) {
   const [tasks, setTasks] = useState([]);
   const [members, setMembers] = useState([]);
   const [loaded, setLoaded] = useState(false);
-  const [view, setView] = useState("month");
+  const [view, setView] = useState("week");
   const [anchor, setAnchor] = useState(todayDate());
   const [editTask, setEditTask] = useState(null);
   const [viewTask, setViewTask] = useState(null);
   const [showMembers, setShowMembers] = useState(false);
   const [saveErr, setSaveErr] = useState("");
+  const [showExitConfirm, setShowExitConfirm] = useState(false);
+  const [viewStack, setViewStack] = useState([]); // for back-button: where to return to
+
+  const changeView = (v) => {
+    setViewStack((s) => [...s, view]);
+    setView(v);
+  };
 
   const canEdit = member.role === "parent";
+
+  // Establish one "guard" history entry so the very first hardware/gesture
+  // back press is ours to intercept, instead of leaving the app immediately.
+  useEffect(() => { window.history.pushState({ appNav: true }, ""); }, []);
+
+  // Android/browser back button: close a modal, or step back through the
+  // view history, before ever asking to actually leave the app.
+  useEffect(() => {
+    const armGuard = () => window.history.pushState({ appNav: true }, "");
+    const handlePopState = () => {
+      if (editTask) { setEditTask(null); armGuard(); return; }
+      if (viewTask) { setViewTask(null); armGuard(); return; }
+      if (showMembers) { setShowMembers(false); armGuard(); return; }
+      if (viewStack.length > 0) {
+        setView(viewStack[viewStack.length - 1]);
+        setViewStack((s) => s.slice(0, -1));
+        armGuard();
+        return;
+      }
+      if (view !== "week") { setView("week"); armGuard(); return; }
+      if (showExitConfirm) return; // second press while dialog is open -> really exit
+      setShowExitConfirm(true);
+      armGuard();
+    };
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, [editTask, viewTask, showMembers, view, viewStack, showExitConfirm]);
 
   // Real-time: any change any family member makes (on any device) appears
   // here automatically, no manual refresh needed.
@@ -745,8 +843,17 @@ function FamilyApp({ family, member, isAdminView, onLogout, onBackToAdmin }) {
     return () => { unsubTasks(); unsubMembers(); };
   }, [family.id]);
 
+  // Colors live on the family member, not the task, so if someone changes
+  // their color every task they're tied to updates automatically.
+  const memberColorMap = useMemo(() => Object.fromEntries(members.map((m) => [m.id, m.color || UNASSIGNED_COLOR])), [members]);
+  const coloredTasks = useMemo(
+    () => tasks.map((t) => ({ ...t, color: colorForAssignee(t.assigneeId, memberColorMap) })),
+    [tasks, memberColorMap]
+  );
+
   const handleSave = async (form) => {
-    try { await saveTask(family.id, form); }
+    const assigneeName = form.assigneeId ? members.find((m) => m.id === form.assigneeId)?.name || "" : "";
+    try { await saveTask(family.id, { ...form, assigneeName }); }
     catch (e) { setSaveErr("שמירה נכשלה — נסו שוב"); setTimeout(() => setSaveErr(""), 3000); }
     setEditTask(null);
   };
@@ -826,7 +933,7 @@ function FamilyApp({ family, member, isAdminView, onLogout, onBackToAdmin }) {
           </div>
           <div style={{ display: "flex", background: T.surfaceAlt, borderRadius: 10, padding: 3, gap: 2 }}>
             {[["month", "חודשי"], ["week", "שבועי"], ["day", "יומי"]].map(([v, label]) => (
-              <button key={v} onClick={() => setView(v)} style={{
+              <button key={v} onClick={() => changeView(v)} style={{
                 padding: "6px 14px", borderRadius: 8, border: "none", cursor: "pointer", fontSize: 12.5, fontWeight: 700,
                 background: view === v ? T.accent : "transparent", color: view === v ? "#fff" : T.textMuted,
               }}>{label}</button>
@@ -837,13 +944,13 @@ function FamilyApp({ family, member, isAdminView, onLogout, onBackToAdmin }) {
         {!loaded ? (
           <div style={{ textAlign: "center", padding: 60, color: T.textMuted }}>טוען יומן…</div>
         ) : view === "month" ? (
-          <MonthView anchor={anchor} tasks={tasks} canEdit={canEdit}
-            onDayClick={(d) => { setAnchor(d); setView("day"); }}
+          <MonthView anchor={anchor} tasks={coloredTasks} canEdit={canEdit}
+            onDayClick={(d) => { setAnchor(d); changeView("day"); }}
             onTaskClick={openTask} onAddDay={openNew} />
         ) : view === "week" ? (
-          <WeekView anchor={anchor} tasks={tasks} onTaskClick={openTask} />
+          <WeekAgendaView anchor={anchor} tasks={coloredTasks} onTaskClick={openTask} />
         ) : (
-          <DayView anchor={anchor} tasks={tasks} onTaskClick={openTask} />
+          <DayView anchor={anchor} tasks={coloredTasks} onTaskClick={openTask} />
         )}
 
         <p style={{ fontSize: 11.5, color: T.textMuted, marginTop: 14, lineHeight: 1.7 }}>
@@ -863,6 +970,17 @@ function FamilyApp({ family, member, isAdminView, onLogout, onBackToAdmin }) {
       {viewTask && !canEdit && <TaskViewModal task={viewTask} onClose={() => setViewTask(null)} />}
       {showMembers && canEdit && (
         <MembersModal family={family} members={members} currentMember={member} onClose={() => setShowMembers(false)} />
+      )}
+      {showExitConfirm && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(20,50,55,0.35)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 60, padding: 16 }}>
+          <div style={{ background: T.surface, borderRadius: 18, padding: 22, maxWidth: 320, width: "100%", textAlign: "center", boxShadow: "0 12px 40px rgba(20,60,65,0.25)" }}>
+            <p style={{ fontSize: 14.5, color: T.text, margin: "0 0 18px", fontWeight: 600 }}>לצאת מהאפליקציה?</p>
+            <div style={{ display: "flex", gap: 10 }}>
+              <button onClick={() => setShowExitConfirm(false)} style={{ flex: 1, padding: "10px", borderRadius: 10, border: `1px solid ${T.border}`, background: T.surface, color: T.text, cursor: "pointer", fontSize: 13.5, fontWeight: 600 }}>להישאר</button>
+              <button onClick={() => window.history.back()} style={{ flex: 1, padding: "10px", borderRadius: 10, border: "none", background: T.danger, color: "#fff", cursor: "pointer", fontSize: 13.5, fontWeight: 700 }}>כן, לצאת</button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

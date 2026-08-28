@@ -89,6 +89,18 @@ async function linkUserToFamily(uid, familyId) {
 }
 
 /* ---------------------------------- members ---------------------------------- */
+const MEMBER_COLOR_PALETTE = [
+  "#2FB6CC", "#5AC08B", "#F0A44E", "#EE7CA0",
+  "#8D82D6", "#F08A63", "#5C9EE8", "#F0CB4E",
+];
+// Deterministic pick from a uid string, so it never needs to read the
+// members list (which a brand-new member isn't allowed to do yet).
+function autoColorForUid(uid) {
+  let hash = 0;
+  for (let i = 0; i < uid.length; i++) hash = (hash * 31 + uid.charCodeAt(i)) >>> 0;
+  return MEMBER_COLOR_PALETTE[hash % MEMBER_COLOR_PALETTE.length];
+}
+
 // Member doc ID == Firebase Auth UID. This is what makes the security rules
 // work: a member can only ever create/claim *their own* doc. `isNewFamily`
 // tells us whether THIS caller just created the family (so they become its
@@ -100,7 +112,10 @@ export async function getOrCreateMember(familyId, user, isNewFamily) {
     await linkUserToFamily(user.uid, familyId);
     return { id: snap.id, ...snap.data() };
   }
-  const data = { name: user.displayName || user.email, email: user.email, role: isNewFamily ? "parent" : "child" };
+  const data = {
+    name: user.displayName || user.email, email: user.email,
+    role: isNewFamily ? "parent" : "child", color: autoColorForUid(user.uid),
+  };
   await setDoc(ref, data);
   await linkUserToFamily(user.uid, familyId);
   return { id: user.uid, ...data };
@@ -114,9 +129,13 @@ export function subscribeMembers(familyId, cb) {
 export async function updateMemberRole(familyId, memberId, role) {
   await setDoc(doc(db, "families", familyId, "members", memberId), { role }, { merge: true });
 }
+export async function updateMemberColor(familyId, memberId, color) {
+  await setDoc(doc(db, "families", familyId, "members", memberId), { color }, { merge: true });
+}
 export async function removeMember(familyId, memberId) {
   await deleteDoc(doc(db, "families", familyId, "members", memberId));
 }
+
 
 /* ---------------------------------- tasks ---------------------------------- */
 export function subscribeTasks(familyId, cb) {
