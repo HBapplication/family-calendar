@@ -7,7 +7,7 @@ import {
   subscribeAuth, signInWithGoogle, signOutUser, isSystemAdmin,
   listFamilies, getFamily, createFamilyIfMissing, deleteFamily, getUserFamilies,
   getOrCreateMember, subscribeMembers, updateMemberRole, updateMemberColor, removeMember,
-  subscribeTasks, saveTask, deleteTask,
+  subscribeTasks, saveTask, deleteTask, excludeTaskDate,
 } from "./firebase";
 
 /* ---------------------------------- logo ---------------------------------- */
@@ -71,6 +71,7 @@ function getMonthGrid(anchor) {
 
 function occursOnDate(task, dateObj) {
   const iso = toISO(dateObj);
+  if ((task.excludedDates || []).includes(iso)) return false;
   if (iso < task.startDate) return false;
   if (task.recurrence === "none") return iso === task.startDate;
   if (iso > task.endDate) return false;
@@ -437,8 +438,9 @@ const emptyTask = (dateISO) => ({
   recurrence: "none", customDays: [],
 });
 
-function TaskModal({ initial, members, onSave, onDelete, onClose }) {
+function TaskModal({ initial, members, occurrenceDate, onSave, onDelete, onClose }) {
   const [form, setForm] = useState(initial);
+  const [deleteChoice, setDeleteChoice] = useState(false);
   const isEdit = !!initial.id;
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
 
@@ -539,12 +541,34 @@ function TaskModal({ initial, members, onSave, onDelete, onClose }) {
           )}
         </div>
 
-        <div style={{ display: "flex", gap: 10, padding: 18, borderTop: `1px solid ${T.border}` }}>
-          {isEdit && (
-            <button onClick={() => onDelete(form.id)} style={{
+        <div style={{ display: "flex", gap: 10, padding: 18, borderTop: `1px solid ${T.border}`, flexWrap: "wrap" }}>
+          {isEdit && form.recurrence === "none" && (
+            <button onClick={() => onDelete(form.id, "all")} style={{
               display: "flex", alignItems: "center", gap: 6, padding: "10px 14px", borderRadius: 10,
               border: `1px solid ${T.danger}55`, background: "#FCEEED", color: T.danger, cursor: "pointer", fontWeight: 600, fontSize: 13.5,
             }}><Trash2 size={15} /> מחיקה</button>
+          )}
+          {isEdit && form.recurrence !== "none" && !deleteChoice && (
+            <button onClick={() => setDeleteChoice(true)} style={{
+              display: "flex", alignItems: "center", gap: 6, padding: "10px 14px", borderRadius: 10,
+              border: `1px solid ${T.danger}55`, background: "#FCEEED", color: T.danger, cursor: "pointer", fontWeight: 600, fontSize: 13.5,
+            }}><Trash2 size={15} /> מחיקה</button>
+          )}
+          {isEdit && form.recurrence !== "none" && deleteChoice && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 6, width: "100%" }}>
+              <span style={{ fontSize: 12, color: T.textMuted }}>זו משימה חוזרת — מה למחוק?</span>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button onClick={() => onDelete(form.id, "occurrence", occurrenceDate)} style={{
+                  flex: 1, padding: "9px 10px", borderRadius: 10, border: `1px solid ${T.danger}55`,
+                  background: "#FCEEED", color: T.danger, cursor: "pointer", fontWeight: 600, fontSize: 12.5,
+                }}>רק את האירוע הזה ({occurrenceDate})</button>
+                <button onClick={() => onDelete(form.id, "all")} style={{
+                  flex: 1, padding: "9px 10px", borderRadius: 10, border: "none",
+                  background: T.danger, color: "#fff", cursor: "pointer", fontWeight: 700, fontSize: 12.5,
+                }}>את כל הסדרה</button>
+              </div>
+              <button onClick={() => setDeleteChoice(false)} style={{ alignSelf: "flex-start", border: "none", background: "transparent", color: T.textMuted, cursor: "pointer", fontSize: 11.5 }}>ביטול</button>
+            </div>
           )}
           <div style={{ flex: 1 }} />
           <button onClick={onClose} style={{ padding: "10px 16px", borderRadius: 10, border: `1px solid ${T.border}`, background: T.surface, cursor: "pointer", fontSize: 13.5, color: T.text }}>ביטול</button>
@@ -817,6 +841,7 @@ function FamilyApp({ family, member, isAdminView, onLogout, onBackToAdmin }) {
   const [view, setView] = useState("week");
   const [anchor, setAnchor] = useState(todayDate());
   const [editTask, setEditTask] = useState(null);
+  const [editTaskDate, setEditTaskDate] = useState(null);
   const [viewTask, setViewTask] = useState(null);
   const [showMembers, setShowMembers] = useState(false);
   const [saveErr, setSaveErr] = useState("");
@@ -829,7 +854,7 @@ function FamilyApp({ family, member, isAdminView, onLogout, onBackToAdmin }) {
   };
 
   const goHome = () => {
-    setEditTask(null); setViewTask(null); setShowMembers(false);
+    setEditTask(null); setEditTaskDate(null); setViewTask(null); setShowMembers(false);
     setViewStack([]); setView("week"); setAnchor(todayDate());
   };
 
@@ -844,7 +869,7 @@ function FamilyApp({ family, member, isAdminView, onLogout, onBackToAdmin }) {
   useEffect(() => {
     const armGuard = () => window.history.pushState({ appNav: true }, "");
     const handlePopState = () => {
-      if (editTask) { setEditTask(null); armGuard(); return; }
+      if (editTask) { setEditTask(null); setEditTaskDate(null); armGuard(); return; }
       if (viewTask) { setViewTask(null); armGuard(); return; }
       if (showMembers) { setShowMembers(false); armGuard(); return; }
       if (viewStack.length > 0) {
@@ -884,14 +909,20 @@ function FamilyApp({ family, member, isAdminView, onLogout, onBackToAdmin }) {
     catch (e) { setSaveErr("שמירה נכשלה — נסו שוב"); setTimeout(() => setSaveErr(""), 3000); }
     setEditTask(null);
   };
-  const handleDelete = async (id) => {
-    try { await deleteTask(family.id, id); }
+  const handleDelete = async (id, mode, dateISO) => {
+    try {
+      if (mode === "occurrence" && dateISO) await excludeTaskDate(family.id, id, dateISO);
+      else await deleteTask(family.id, id);
+    }
     catch (e) { setSaveErr("מחיקה נכשלה — נסו שוב"); setTimeout(() => setSaveErr(""), 3000); }
     setEditTask(null);
   };
 
   const openNew = (date) => canEdit && setEditTask(emptyTask(toISO(date || anchor)));
-  const openTask = (task) => { canEdit ? setEditTask({ ...task }) : setViewTask(task); };
+  const openTask = (task, date) => {
+    if (canEdit) { setEditTask({ ...task }); setEditTaskDate(toISO(date || fromISO(task.startDate))); }
+    else setViewTask(task);
+  };
 
   const goToday = () => setAnchor(todayDate());
   const goPrev = () => {
@@ -992,7 +1023,7 @@ function FamilyApp({ family, member, isAdminView, onLogout, onBackToAdmin }) {
       )}
 
       {editTask && canEdit && (
-        <TaskModal initial={editTask} members={members} onSave={handleSave} onDelete={handleDelete} onClose={() => setEditTask(null)} />
+        <TaskModal initial={editTask} members={members} occurrenceDate={editTaskDate} onSave={handleSave} onDelete={handleDelete} onClose={() => setEditTask(null)} />
       )}
       {viewTask && !canEdit && <TaskViewModal task={viewTask} onClose={() => setViewTask(null)} />}
       {showMembers && canEdit && (
