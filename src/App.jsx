@@ -863,6 +863,13 @@ function FamilyApp({ family, member, isAdminView, onLogout, onBackToAdmin }) {
 
   const canEdit = member.role === "parent";
 
+  // Small hidden diagnostic log for the back-button behavior — tap the 🐛
+  // button (bottom-left corner) to reveal it. Useful across different
+  // phones/browsers since there's no easy devtools access on mobile.
+  const [debugLog, setDebugLog] = useState([]);
+  const [showDebug, setShowDebug] = useState(false);
+  const log = (msg) => setDebugLog((l) => [...l.slice(-9), `${new Date().toLocaleTimeString("he-IL")} — ${msg} (hist.len=${window.history.length})`]);
+
   // Keep a ref of the latest state, updated every render (not via useEffect,
   // so there's zero lag) — the popstate listener below is attached ONCE and
   // reads from this ref, instead of being torn down/recreated on every state
@@ -873,27 +880,30 @@ function FamilyApp({ family, member, isAdminView, onLogout, onBackToAdmin }) {
   latest.current = { editTask, viewTask, showMembers, view, viewStack };
 
   useEffect(() => {
-    const armGuard = () => window.history.pushState({ appNav: true }, "");
-    armGuard(); // establish the first guard entry
+    const armGuard = (why) => { window.history.pushState({ appNav: true }, ""); log(`arm: ${why}`); };
+    log(`mount, initial hist.len=${window.history.length}`);
+    armGuard("initial"); // establish the first guard entry
 
     const handlePopState = () => {
       const s = latest.current;
-      if (s.editTask) { setEditTask(null); setEditTaskDate(null); armGuard(); return; }
-      if (s.viewTask) { setViewTask(null); armGuard(); return; }
-      if (s.showMembers) { setShowMembers(false); armGuard(); return; }
+      log(`POPSTATE fired! view=${s.view} stack=${s.viewStack.length} edit=${!!s.editTask} viewT=${!!s.viewTask} mem=${!!s.showMembers}`);
+      if (s.editTask) { setEditTask(null); setEditTaskDate(null); armGuard("closed editTask"); return; }
+      if (s.viewTask) { setViewTask(null); armGuard("closed viewTask"); return; }
+      if (s.showMembers) { setShowMembers(false); armGuard("closed members"); return; }
       if (s.viewStack.length > 0) {
         const target = s.viewStack[s.viewStack.length - 1];
         setView(target);
         if (target === "week") setAnchor(todayDate()); // returning to the calendar -> jump to today
         setViewStack((prev) => prev.slice(0, -1));
-        armGuard();
+        armGuard(`popped viewStack -> ${target}`);
         return;
       }
-      if (s.view !== "week") { setView("week"); setAnchor(todayDate()); armGuard(); return; }
+      if (s.view !== "week") { setView("week"); setAnchor(todayDate()); armGuard("forced week"); return; }
       // At home with nothing open: show the confirmation, but deliberately
       // do NOT re-arm — the very next real back press has nothing left of
       // ours to intercept, so the browser/OS handles it as a normal exit
       // (the standard "press back again to exit" pattern).
+      log("*** SHOWING EXIT DIALOG (no re-arm) ***");
       setShowExitConfirm(true);
     };
     window.addEventListener("popstate", handlePopState);
@@ -1095,6 +1105,21 @@ function FamilyApp({ family, member, isAdminView, onLogout, onBackToAdmin }) {
               <button onClick={() => window.close()} style={{ flex: 1, padding: "10px", borderRadius: 10, border: "none", background: T.danger, color: "#fff", cursor: "pointer", fontSize: 13.5, fontWeight: 700 }}>כן, לצאת</button>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Tiny hidden diagnostic toggle for the back-button behavior. */}
+      <button onClick={() => setShowDebug((v) => !v)} style={{
+        position: "fixed", bottom: 8, insetInlineStart: 8, zIndex: 95, width: 30, height: 30, borderRadius: "50%",
+        border: "none", background: "rgba(20,30,35,0.5)", color: "#fff", fontSize: 14, cursor: "pointer", opacity: 0.5,
+      }}>🐛</button>
+      {showDebug && (
+        <div style={{
+          position: "fixed", bottom: 44, insetInlineStart: 8, insetInlineEnd: 8, zIndex: 95,
+          background: "rgba(20,30,35,0.94)", color: "#7CF0C2", fontFamily: "monospace",
+          fontSize: 10, padding: "8px 10px", maxHeight: 220, overflowY: "auto", direction: "ltr", textAlign: "left", borderRadius: 10,
+        }}>
+          {debugLog.length === 0 ? <div>(no events yet — press back)</div> : debugLog.map((l, i) => <div key={i}>{l}</div>)}
         </div>
       )}
     </div>
