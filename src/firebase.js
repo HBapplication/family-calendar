@@ -151,3 +151,9 @@ export async function saveTask(familyId, task) {
 export async function deleteTask(familyId, taskId) {
   await deleteDoc(doc(db, "families", familyId, "tasks", taskId));
 }
+// Removes just ONE occurrence of a recurring task, without touching the
+// series itself — stores the date in `excludedDates`, checked by the
+// client when expanding the recurrence rule.
+export async function excludeTaskDate(familyId, taskId, dateISO) {
+  await setDoc(doc(db, "families", familyId, "tasks", taskId), { excludedDates: arrayUnion(dateISO) }, { merge: true });
+}

@@ -7,7 +7,7 @@ import {
   subscribeAuth, signInWithGoogle, signOutUser, isSystemAdmin,
   listFamilies, getFamily, createFamilyIfMissing, deleteFamily, getUserFamilies,
   getOrCreateMember, subscribeMembers, updateMemberRole, updateMemberColor, removeMember,
-  subscribeTasks, saveTask, deleteTask,
+  subscribeTasks, saveTask, deleteTask, excludeTaskDate,
 } from "./firebase";
 
 /* ---------------------------------- logo ---------------------------------- */
@@ -36,6 +36,8 @@ const TASK_COLORS = [
   "#8D82D6", "#F08A63", "#5C9EE8", "#F0CB4E",
 ];
 const UNASSIGNED_COLOR = "#9AA9AC";
+const FAMILY_ID = "family";
+const FAMILY_COLOR = "#33475B";
 
 const WD_SHORT = ["א", "ב", "ג", "ד", "ה", "ו", "ש"];
 const WD_FULL = ["ראשון", "שני", "שלישי", "רביעי", "חמישי", "שישי", "שבת"];
@@ -69,6 +71,7 @@ function getMonthGrid(anchor) {
 
 function occursOnDate(task, dateObj) {
   const iso = toISO(dateObj);
+  if ((task.excludedDates || []).includes(iso)) return false;
   if (iso < task.startDate) return false;
   if (task.recurrence === "none") return iso === task.startDate;
   if (iso > task.endDate) return false;
@@ -92,6 +95,7 @@ function tasksForDate(tasks, dateObj) {
 }
 
 function colorForAssignee(assigneeId, memberColorMap) {
+  if (assigneeId === FAMILY_ID) return FAMILY_COLOR;
   return (assigneeId && memberColorMap[assigneeId]) || UNASSIGNED_COLOR;
 }
 
@@ -218,6 +222,16 @@ function TaskChip({ task, occursTime, onClick, compact }) {
 }
 
 /* ---------------------------------- Month View ---------------------------------- */
+function groupTasksByColor(dayTasks) {
+  const order = [];
+  const map = {};
+  dayTasks.forEach((t) => {
+    if (!map[t.color]) { map[t.color] = []; order.push(t.color); }
+    map[t.color].push(t);
+  });
+  return order.map((color) => ({ color, tasks: map[color] }));
+}
+
 function MonthView({ anchor, tasks, onDayClick, onTaskClick, onAddDay, canEdit }) {
   const cells = useMemo(() => getMonthGrid(anchor), [anchor]);
   const today = todayDate();
@@ -253,12 +267,20 @@ function MonthView({ anchor, tasks, onDayClick, onTaskClick, onAddDay, canEdit }
                 )}
               </div>
               <div style={{ display: "flex", flexWrap: "wrap", gap: 4, alignItems: "center" }}>
-                {dayTasks.slice(0, 10).map((t) => (
-                  <button key={t.id} onClick={(e) => { e.stopPropagation(); onTaskClick(t, d); }} title={t.title} style={{
-                    width: 10, height: 10, borderRadius: "50%", background: t.color, border: "none", cursor: "pointer", padding: 0, flexShrink: 0,
-                  }} />
+                {groupTasksByColor(dayTasks).slice(0, 6).map((g) => (
+                  g.tasks.length === 1 ? (
+                    <button key={g.color} onClick={(e) => { e.stopPropagation(); onTaskClick(g.tasks[0], d); }} title={g.tasks[0].title} style={{
+                      width: 10, height: 10, borderRadius: "50%", background: g.color, border: "none", cursor: "pointer", padding: 0, flexShrink: 0,
+                    }} />
+                  ) : (
+                    <button key={g.color} onClick={(e) => { e.stopPropagation(); onDayClick(d); }} title={`${g.tasks.length} משימות`} style={{
+                      minWidth: 15, height: 15, borderRadius: 999, background: g.color, border: "none", cursor: "pointer",
+                      padding: "0 4px", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center",
+                      fontSize: 9, fontWeight: 800, color: "#fff", lineHeight: 1,
+                    }}>{g.tasks.length}</button>
+                  )
                 ))}
-                {dayTasks.length > 10 && <span style={{ fontSize: 10, color: T.textMuted }}>+{dayTasks.length - 10}</span>}
+                {groupTasksByColor(dayTasks).length > 6 && <span style={{ fontSize: 10, color: T.textMuted }}>+{groupTasksByColor(dayTasks).length - 6}</span>}
               </div>
             </div>
           );
@@ -416,8 +438,9 @@ const emptyTask = (dateISO) => ({
   recurrence: "none", customDays: [],
 });
 
-function TaskModal({ initial, members, onSave, onDelete, onClose }) {
+function TaskModal({ initial, members, occurrenceDate, onSave, onDelete, onClose }) {
   const [form, setForm] = useState(initial);
+  const [deleteChoice, setDeleteChoice] = useState(false);
   const isEdit = !!initial.id;
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
 
@@ -450,6 +473,7 @@ function TaskModal({ initial, members, onSave, onDelete, onClose }) {
           <Field label="אחראי/ת (קובע/ת את הצבע ביומן)">
             <select value={form.assigneeId} onChange={(e) => set("assigneeId", e.target.value)} style={inputStyle}>
               <option value="">ללא שיוך (צבע ניטרלי)</option>
+              <option value={FAMILY_ID}>כל המשפחה</option>
               {(members || []).map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
             </select>
             <div style={{ display: "flex", gap: 6, marginTop: 8, alignItems: "center" }}>
@@ -508,7 +532,7 @@ function TaskModal({ initial, members, onSave, onDelete, onClose }) {
           </Field>
 
           {form.title && form.startDate && (
-            <a href={googleCalendarUrl({ ...form, id: form.id || "tmp", assigneeName: (members || []).find((m) => m.id === form.assigneeId)?.name })} target="_blank" rel="noreferrer" style={{
+            <a href={googleCalendarUrl({ ...form, id: form.id || "tmp", assigneeName: form.assigneeId === FAMILY_ID ? "כל המשפחה" : (members || []).find((m) => m.id === form.assigneeId)?.name })} target="_blank" rel="noreferrer" style={{
               display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "9px 12px",
               borderRadius: 10, border: `1px solid ${T.border}`, color: T.accentDark, textDecoration: "none", fontSize: 13, fontWeight: 600,
             }}>
@@ -519,7 +543,7 @@ function TaskModal({ initial, members, onSave, onDelete, onClose }) {
 
         <div style={{ display: "flex", gap: 10, padding: 18, borderTop: `1px solid ${T.border}` }}>
           {isEdit && (
-            <button onClick={() => onDelete(form.id)} style={{
+            <button onClick={() => (form.recurrence === "none" ? onDelete(form.id, "all") : setDeleteChoice(true))} style={{
               display: "flex", alignItems: "center", gap: 6, padding: "10px 14px", borderRadius: 10,
               border: `1px solid ${T.danger}55`, background: "#FCEEED", color: T.danger, cursor: "pointer", fontWeight: 600, fontSize: 13.5,
             }}><Trash2 size={15} /> מחיקה</button>
@@ -532,6 +556,31 @@ function TaskModal({ initial, members, onSave, onDelete, onClose }) {
           }}>שמירה</button>
         </div>
       </div>
+
+      {deleteChoice && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(20,50,55,0.45)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 60, padding: 16 }} onClick={(e) => e.stopPropagation()}>
+          <div style={{ background: T.surface, borderRadius: 18, padding: 22, maxWidth: 340, width: "100%", boxShadow: "0 12px 40px rgba(20,60,65,0.3)" }}>
+            <h4 style={{ margin: "0 0 6px", fontFamily: "Quicksand, sans-serif", fontSize: 16.5, color: T.text }}>מחיקת משימה חוזרת</h4>
+            <p style={{ margin: "0 0 18px", fontSize: 13, color: T.textMuted, lineHeight: 1.6 }}>
+              "{form.title}" חוזרת על עצמה. את מה תרצו למחוק?
+            </p>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              <button onClick={() => onDelete(form.id, "occurrence", occurrenceDate)} style={{
+                padding: "11px 12px", borderRadius: 10, border: `1px solid ${T.danger}55`,
+                background: "#FCEEED", color: T.danger, cursor: "pointer", fontWeight: 700, fontSize: 13.5, textAlign: "center",
+              }}>רק את המופע הזה ({occurrenceDate})</button>
+              <button onClick={() => onDelete(form.id, "all")} style={{
+                padding: "11px 12px", borderRadius: 10, border: "none",
+                background: T.danger, color: "#fff", cursor: "pointer", fontWeight: 700, fontSize: 13.5, textAlign: "center",
+              }}>את כל הסדרה החוזרת</button>
+              <button onClick={() => setDeleteChoice(false)} style={{
+                padding: "10px 12px", borderRadius: 10, border: `1px solid ${T.border}`,
+                background: T.surface, color: T.text, cursor: "pointer", fontWeight: 600, fontSize: 13, textAlign: "center", marginTop: 4,
+              }}>ביטול</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -795,6 +844,7 @@ function FamilyApp({ family, member, isAdminView, onLogout, onBackToAdmin }) {
   const [view, setView] = useState("week");
   const [anchor, setAnchor] = useState(todayDate());
   const [editTask, setEditTask] = useState(null);
+  const [editTaskDate, setEditTaskDate] = useState(null);
   const [viewTask, setViewTask] = useState(null);
   const [showMembers, setShowMembers] = useState(false);
   const [saveErr, setSaveErr] = useState("");
@@ -806,6 +856,11 @@ function FamilyApp({ family, member, isAdminView, onLogout, onBackToAdmin }) {
     setView(v);
   };
 
+  const goHome = () => {
+    setEditTask(null); setEditTaskDate(null); setViewTask(null); setShowMembers(false);
+    setViewStack([]); setView("week"); setAnchor(todayDate());
+  };
+
   const canEdit = member.role === "parent";
 
   // Establish one "guard" history entry so the very first hardware/gesture
@@ -813,11 +868,15 @@ function FamilyApp({ family, member, isAdminView, onLogout, onBackToAdmin }) {
   useEffect(() => { window.history.pushState({ appNav: true }, ""); }, []);
 
   // Android/browser back button: close a modal, or step back through the
-  // view history, before ever asking to actually leave the app.
+  // view history, before ever asking to actually leave the app. Once we're
+  // at the home screen with nothing open, we show a confirmation but
+  // deliberately do NOT re-arm the guard — that way the very next real back
+  // press has nothing left of ours to intercept, and the browser/OS handles
+  // it as a normal exit (the standard "press back again to exit" pattern).
   useEffect(() => {
     const armGuard = () => window.history.pushState({ appNav: true }, "");
     const handlePopState = () => {
-      if (editTask) { setEditTask(null); armGuard(); return; }
+      if (editTask) { setEditTask(null); setEditTaskDate(null); armGuard(); return; }
       if (viewTask) { setViewTask(null); armGuard(); return; }
       if (showMembers) { setShowMembers(false); armGuard(); return; }
       if (viewStack.length > 0) {
@@ -827,13 +886,17 @@ function FamilyApp({ family, member, isAdminView, onLogout, onBackToAdmin }) {
         return;
       }
       if (view !== "week") { setView("week"); armGuard(); return; }
-      if (showExitConfirm) return; // second press while dialog is open -> really exit
       setShowExitConfirm(true);
-      armGuard();
     };
     window.addEventListener("popstate", handlePopState);
     return () => window.removeEventListener("popstate", handlePopState);
-  }, [editTask, viewTask, showMembers, view, viewStack, showExitConfirm]);
+  }, [editTask, viewTask, showMembers, view, viewStack]);
+
+  // Choosing to stay re-arms the guard so future back presses are caught again.
+  const stayInApp = () => {
+    setShowExitConfirm(false);
+    window.history.pushState({ appNav: true }, "");
+  };
 
   // Real-time: any change any family member makes (on any device) appears
   // here automatically, no manual refresh needed.
@@ -852,19 +915,25 @@ function FamilyApp({ family, member, isAdminView, onLogout, onBackToAdmin }) {
   );
 
   const handleSave = async (form) => {
-    const assigneeName = form.assigneeId ? members.find((m) => m.id === form.assigneeId)?.name || "" : "";
+    const assigneeName = form.assigneeId === FAMILY_ID ? "כל המשפחה" : form.assigneeId ? members.find((m) => m.id === form.assigneeId)?.name || "" : "";
     try { await saveTask(family.id, { ...form, assigneeName }); }
     catch (e) { setSaveErr("שמירה נכשלה — נסו שוב"); setTimeout(() => setSaveErr(""), 3000); }
     setEditTask(null);
   };
-  const handleDelete = async (id) => {
-    try { await deleteTask(family.id, id); }
+  const handleDelete = async (id, mode, dateISO) => {
+    try {
+      if (mode === "occurrence" && dateISO) await excludeTaskDate(family.id, id, dateISO);
+      else await deleteTask(family.id, id);
+    }
     catch (e) { setSaveErr("מחיקה נכשלה — נסו שוב"); setTimeout(() => setSaveErr(""), 3000); }
     setEditTask(null);
   };
 
   const openNew = (date) => canEdit && setEditTask(emptyTask(toISO(date || anchor)));
-  const openTask = (task) => { canEdit ? setEditTask({ ...task }) : setViewTask(task); };
+  const openTask = (task, date) => {
+    if (canEdit) { setEditTask({ ...task }); setEditTaskDate(toISO(date || fromISO(task.startDate))); }
+    else setViewTask(task);
+  };
 
   const goToday = () => setAnchor(todayDate());
   const goPrev = () => {
@@ -893,7 +962,7 @@ function FamilyApp({ family, member, isAdminView, onLogout, onBackToAdmin }) {
 
         <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8, flex: 1, minWidth: 200 }}>
-            <img src={LOGO_URI} alt="לוגו" style={{ width: 38, height: 38, borderRadius: 12 }} />
+            <img src={LOGO_URI} alt="לוגו" onClick={goHome} title="למסך הבית" style={{ width: 38, height: 38, borderRadius: 12, cursor: "pointer" }} />
             <div>
               <h1 style={{ fontFamily: "Quicksand, sans-serif", fontSize: 19, fontWeight: 800, margin: 0, color: T.text }}>{family.name}</h1>
               <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
@@ -965,7 +1034,7 @@ function FamilyApp({ family, member, isAdminView, onLogout, onBackToAdmin }) {
       )}
 
       {editTask && canEdit && (
-        <TaskModal initial={editTask} members={members} onSave={handleSave} onDelete={handleDelete} onClose={() => setEditTask(null)} />
+        <TaskModal initial={editTask} members={members} occurrenceDate={editTaskDate} onSave={handleSave} onDelete={handleDelete} onClose={() => setEditTask(null)} />
       )}
       {viewTask && !canEdit && <TaskViewModal task={viewTask} onClose={() => setViewTask(null)} />}
       {showMembers && canEdit && (
@@ -974,10 +1043,11 @@ function FamilyApp({ family, member, isAdminView, onLogout, onBackToAdmin }) {
       {showExitConfirm && (
         <div style={{ position: "fixed", inset: 0, background: "rgba(20,50,55,0.35)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 60, padding: 16 }}>
           <div style={{ background: T.surface, borderRadius: 18, padding: 22, maxWidth: 320, width: "100%", textAlign: "center", boxShadow: "0 12px 40px rgba(20,60,65,0.25)" }}>
-            <p style={{ fontSize: 14.5, color: T.text, margin: "0 0 18px", fontWeight: 600 }}>לצאת מהאפליקציה?</p>
+            <p style={{ fontSize: 14.5, color: T.text, margin: "0 0 8px", fontWeight: 600 }}>לצאת מהאפליקציה?</p>
+            <p style={{ fontSize: 11.5, color: T.textMuted, margin: "0 0 18px" }}>לחיצה נוספת על כפתור/מחוות "אחורה" תסגור את האפליקציה.</p>
             <div style={{ display: "flex", gap: 10 }}>
-              <button onClick={() => setShowExitConfirm(false)} style={{ flex: 1, padding: "10px", borderRadius: 10, border: `1px solid ${T.border}`, background: T.surface, color: T.text, cursor: "pointer", fontSize: 13.5, fontWeight: 600 }}>להישאר</button>
-              <button onClick={() => window.history.back()} style={{ flex: 1, padding: "10px", borderRadius: 10, border: "none", background: T.danger, color: "#fff", cursor: "pointer", fontSize: 13.5, fontWeight: 700 }}>כן, לצאת</button>
+              <button onClick={stayInApp} style={{ flex: 1, padding: "10px", borderRadius: 10, border: `1px solid ${T.border}`, background: T.surface, color: T.text, cursor: "pointer", fontSize: 13.5, fontWeight: 600 }}>להישאר</button>
+              <button onClick={() => window.close()} style={{ flex: 1, padding: "10px", borderRadius: 10, border: "none", background: T.danger, color: "#fff", cursor: "pointer", fontSize: 13.5, fontWeight: 700 }}>כן, לצאת</button>
             </div>
           </div>
         </div>
