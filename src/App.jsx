@@ -863,11 +863,6 @@ function FamilyApp({ family, member, isAdminView, onLogout, onBackToAdmin }) {
 
   const canEdit = member.role === "parent";
 
-  // --- TEMPORARY on-screen debug log for diagnosing the back-button issue
-  // on a real phone (no devtools access there). Safe to remove later.
-  const [debugLog, setDebugLog] = useState([]);
-  const log = (msg) => setDebugLog((l) => [...l.slice(-7), `${new Date().toLocaleTimeString("he-IL")} — ${msg}`]);
-
   // Keep a ref of the latest state, updated every render (not via useEffect,
   // so there's zero lag) — the popstate listener below is attached ONCE and
   // reads from this ref, instead of being torn down/recreated on every state
@@ -878,34 +873,51 @@ function FamilyApp({ family, member, isAdminView, onLogout, onBackToAdmin }) {
   latest.current = { editTask, viewTask, showMembers, view, viewStack };
 
   useEffect(() => {
-    const armGuard = (why) => { window.history.pushState({ appNav: true }, ""); log(`arm (${why}) len=${window.history.length}`); };
-    armGuard("mount");
+    const armGuard = () => window.history.pushState({ appNav: true }, "");
+    armGuard(); // establish the first guard entry
 
     const handlePopState = () => {
       const s = latest.current;
-      log(`popstate! len=${window.history.length} view=${s.view} stack=${s.viewStack.length} edit=${!!s.editTask} viewT=${!!s.viewTask} mem=${!!s.showMembers}`);
-      if (s.editTask) { setEditTask(null); setEditTaskDate(null); armGuard("close editTask"); return; }
-      if (s.viewTask) { setViewTask(null); armGuard("close viewTask"); return; }
-      if (s.showMembers) { setShowMembers(false); armGuard("close members"); return; }
+      if (s.editTask) { setEditTask(null); setEditTaskDate(null); armGuard(); return; }
+      if (s.viewTask) { setViewTask(null); armGuard(); return; }
+      if (s.showMembers) { setShowMembers(false); armGuard(); return; }
       if (s.viewStack.length > 0) {
-        setView(s.viewStack[s.viewStack.length - 1]);
+        const target = s.viewStack[s.viewStack.length - 1];
+        setView(target);
+        if (target === "week") setAnchor(todayDate()); // returning to the calendar -> jump to today
         setViewStack((prev) => prev.slice(0, -1));
-        armGuard("pop viewStack");
+        armGuard();
         return;
       }
-      if (s.view !== "week") { setView("week"); armGuard("force week"); return; }
-      log("-> SHOW EXIT DIALOG (no re-arm)");
+      if (s.view !== "week") { setView("week"); setAnchor(todayDate()); armGuard(); return; }
+      // At home with nothing open: show the confirmation, but deliberately
+      // do NOT re-arm — the very next real back press has nothing left of
+      // ours to intercept, so the browser/OS handles it as a normal exit
+      // (the standard "press back again to exit" pattern).
       setShowExitConfirm(true);
     };
     window.addEventListener("popstate", handlePopState);
     return () => window.removeEventListener("popstate", handlePopState);
   }, []);
 
+  // Re-center on today whenever the app is reopened / comes back from the
+  // background — but only if the person is just sitting on the home screen
+  // (don't yank them off whatever they're actively doing).
+  useEffect(() => {
+    const handleVisibility = () => {
+      if (document.visibilityState !== "visible") return;
+      const s = latest.current;
+      if (s.view === "week" && s.viewStack.length === 0 && !s.editTask && !s.viewTask && !s.showMembers) {
+        setAnchor(todayDate());
+      }
+    };
+    document.addEventListener("visibilitychange", handleVisibility);
+    return () => document.removeEventListener("visibilitychange", handleVisibility);
+  }, []);
+
   // Choosing to stay re-arms the guard so future back presses are caught again.
   const stayInApp = () => {
-    log("stayInApp clicked");
     setShowExitConfirm(false);
-    window.history.pushState({ appNav: true }, "");
     window.history.pushState({ appNav: true }, "");
   };
 
@@ -1080,23 +1092,11 @@ function FamilyApp({ family, member, isAdminView, onLogout, onBackToAdmin }) {
             <p style={{ fontSize: 11.5, color: T.textMuted, margin: "0 0 18px" }}>לחיצה נוספת על כפתור/מחוות "אחורה" תסגור את האפליקציה.</p>
             <div style={{ display: "flex", gap: 10 }}>
               <button onClick={stayInApp} style={{ flex: 1, padding: "10px", borderRadius: 10, border: `1px solid ${T.border}`, background: T.surface, color: T.text, cursor: "pointer", fontSize: 13.5, fontWeight: 600 }}>להישאר</button>
-              <button onClick={() => { log("exit button clicked (window.close, may be a no-op here)"); window.close(); }} style={{ flex: 1, padding: "10px", borderRadius: 10, border: "none", background: T.danger, color: "#fff", cursor: "pointer", fontSize: 13.5, fontWeight: 700 }}>כן, לצאת</button>
+              <button onClick={() => window.close()} style={{ flex: 1, padding: "10px", borderRadius: 10, border: "none", background: T.danger, color: "#fff", cursor: "pointer", fontSize: 13.5, fontWeight: 700 }}>כן, לצאת</button>
             </div>
           </div>
         </div>
       )}
-
-      {/* TEMPORARY debug panel — shows exactly what the back button is
-          doing, since phones don't have easy devtools access. Screenshot
-          this after testing, then it can be removed. */}
-      <div style={{
-        position: "fixed", bottom: 0, insetInlineStart: 0, insetInlineEnd: 0, zIndex: 90,
-        background: "rgba(20,30,35,0.92)", color: "#7CF0C2", fontFamily: "monospace",
-        fontSize: 10, padding: "6px 10px", maxHeight: 140, overflowY: "auto", direction: "ltr", textAlign: "left",
-      }}>
-        <div style={{ color: "#F0CB4E", marginBottom: 3 }}>DEBUG (temporary) — history.length now: {typeof window !== "undefined" ? window.history.length : "?"}</div>
-        {debugLog.length === 0 ? <div>(no events yet — press back)</div> : debugLog.map((l, i) => <div key={i}>{l}</div>)}
-      </div>
     </div>
   );
 }
