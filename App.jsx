@@ -541,34 +541,12 @@ function TaskModal({ initial, members, occurrenceDate, onSave, onDelete, onClose
           )}
         </div>
 
-        <div style={{ display: "flex", gap: 10, padding: 18, borderTop: `1px solid ${T.border}`, flexWrap: "wrap" }}>
-          {isEdit && form.recurrence === "none" && (
-            <button onClick={() => onDelete(form.id, "all")} style={{
+        <div style={{ display: "flex", gap: 10, padding: 18, borderTop: `1px solid ${T.border}` }}>
+          {isEdit && (
+            <button onClick={() => (form.recurrence === "none" ? onDelete(form.id, "all") : setDeleteChoice(true))} style={{
               display: "flex", alignItems: "center", gap: 6, padding: "10px 14px", borderRadius: 10,
               border: `1px solid ${T.danger}55`, background: "#FCEEED", color: T.danger, cursor: "pointer", fontWeight: 600, fontSize: 13.5,
             }}><Trash2 size={15} /> מחיקה</button>
-          )}
-          {isEdit && form.recurrence !== "none" && !deleteChoice && (
-            <button onClick={() => setDeleteChoice(true)} style={{
-              display: "flex", alignItems: "center", gap: 6, padding: "10px 14px", borderRadius: 10,
-              border: `1px solid ${T.danger}55`, background: "#FCEEED", color: T.danger, cursor: "pointer", fontWeight: 600, fontSize: 13.5,
-            }}><Trash2 size={15} /> מחיקה</button>
-          )}
-          {isEdit && form.recurrence !== "none" && deleteChoice && (
-            <div style={{ display: "flex", flexDirection: "column", gap: 6, width: "100%" }}>
-              <span style={{ fontSize: 12, color: T.textMuted }}>זו משימה חוזרת — מה למחוק?</span>
-              <div style={{ display: "flex", gap: 8 }}>
-                <button onClick={() => onDelete(form.id, "occurrence", occurrenceDate)} style={{
-                  flex: 1, padding: "9px 10px", borderRadius: 10, border: `1px solid ${T.danger}55`,
-                  background: "#FCEEED", color: T.danger, cursor: "pointer", fontWeight: 600, fontSize: 12.5,
-                }}>רק את האירוע הזה ({occurrenceDate})</button>
-                <button onClick={() => onDelete(form.id, "all")} style={{
-                  flex: 1, padding: "9px 10px", borderRadius: 10, border: "none",
-                  background: T.danger, color: "#fff", cursor: "pointer", fontWeight: 700, fontSize: 12.5,
-                }}>את כל הסדרה</button>
-              </div>
-              <button onClick={() => setDeleteChoice(false)} style={{ alignSelf: "flex-start", border: "none", background: "transparent", color: T.textMuted, cursor: "pointer", fontSize: 11.5 }}>ביטול</button>
-            </div>
           )}
           <div style={{ flex: 1 }} />
           <button onClick={onClose} style={{ padding: "10px 16px", borderRadius: 10, border: `1px solid ${T.border}`, background: T.surface, cursor: "pointer", fontSize: 13.5, color: T.text }}>ביטול</button>
@@ -578,6 +556,31 @@ function TaskModal({ initial, members, occurrenceDate, onSave, onDelete, onClose
           }}>שמירה</button>
         </div>
       </div>
+
+      {deleteChoice && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(20,50,55,0.45)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 60, padding: 16 }} onClick={(e) => e.stopPropagation()}>
+          <div style={{ background: T.surface, borderRadius: 18, padding: 22, maxWidth: 340, width: "100%", boxShadow: "0 12px 40px rgba(20,60,65,0.3)" }}>
+            <h4 style={{ margin: "0 0 6px", fontFamily: "Quicksand, sans-serif", fontSize: 16.5, color: T.text }}>מחיקת משימה חוזרת</h4>
+            <p style={{ margin: "0 0 18px", fontSize: 13, color: T.textMuted, lineHeight: 1.6 }}>
+              "{form.title}" חוזרת על עצמה. את מה תרצו למחוק?
+            </p>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              <button onClick={() => onDelete(form.id, "occurrence", occurrenceDate)} style={{
+                padding: "11px 12px", borderRadius: 10, border: `1px solid ${T.danger}55`,
+                background: "#FCEEED", color: T.danger, cursor: "pointer", fontWeight: 700, fontSize: 13.5, textAlign: "center",
+              }}>רק את המופע הזה ({occurrenceDate})</button>
+              <button onClick={() => onDelete(form.id, "all")} style={{
+                padding: "11px 12px", borderRadius: 10, border: "none",
+                background: T.danger, color: "#fff", cursor: "pointer", fontWeight: 700, fontSize: 13.5, textAlign: "center",
+              }}>את כל הסדרה החוזרת</button>
+              <button onClick={() => setDeleteChoice(false)} style={{
+                padding: "10px 12px", borderRadius: 10, border: `1px solid ${T.border}`,
+                background: T.surface, color: T.text, cursor: "pointer", fontWeight: 600, fontSize: 13, textAlign: "center", marginTop: 4,
+              }}>ביטול</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -865,7 +868,11 @@ function FamilyApp({ family, member, isAdminView, onLogout, onBackToAdmin }) {
   useEffect(() => { window.history.pushState({ appNav: true }, ""); }, []);
 
   // Android/browser back button: close a modal, or step back through the
-  // view history, before ever asking to actually leave the app.
+  // view history, before ever asking to actually leave the app. Once we're
+  // at the home screen with nothing open, we show a confirmation but
+  // deliberately do NOT re-arm the guard — that way the very next real back
+  // press has nothing left of ours to intercept, and the browser/OS handles
+  // it as a normal exit (the standard "press back again to exit" pattern).
   useEffect(() => {
     const armGuard = () => window.history.pushState({ appNav: true }, "");
     const handlePopState = () => {
@@ -879,13 +886,17 @@ function FamilyApp({ family, member, isAdminView, onLogout, onBackToAdmin }) {
         return;
       }
       if (view !== "week") { setView("week"); armGuard(); return; }
-      if (showExitConfirm) return; // second press while dialog is open -> really exit
       setShowExitConfirm(true);
-      armGuard();
     };
     window.addEventListener("popstate", handlePopState);
     return () => window.removeEventListener("popstate", handlePopState);
-  }, [editTask, viewTask, showMembers, view, viewStack, showExitConfirm]);
+  }, [editTask, viewTask, showMembers, view, viewStack]);
+
+  // Choosing to stay re-arms the guard so future back presses are caught again.
+  const stayInApp = () => {
+    setShowExitConfirm(false);
+    window.history.pushState({ appNav: true }, "");
+  };
 
   // Real-time: any change any family member makes (on any device) appears
   // here automatically, no manual refresh needed.
@@ -1032,10 +1043,11 @@ function FamilyApp({ family, member, isAdminView, onLogout, onBackToAdmin }) {
       {showExitConfirm && (
         <div style={{ position: "fixed", inset: 0, background: "rgba(20,50,55,0.35)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 60, padding: 16 }}>
           <div style={{ background: T.surface, borderRadius: 18, padding: 22, maxWidth: 320, width: "100%", textAlign: "center", boxShadow: "0 12px 40px rgba(20,60,65,0.25)" }}>
-            <p style={{ fontSize: 14.5, color: T.text, margin: "0 0 18px", fontWeight: 600 }}>לצאת מהאפליקציה?</p>
+            <p style={{ fontSize: 14.5, color: T.text, margin: "0 0 8px", fontWeight: 600 }}>לצאת מהאפליקציה?</p>
+            <p style={{ fontSize: 11.5, color: T.textMuted, margin: "0 0 18px" }}>לחיצה נוספת על כפתור/מחוות "אחורה" תסגור את האפליקציה.</p>
             <div style={{ display: "flex", gap: 10 }}>
-              <button onClick={() => setShowExitConfirm(false)} style={{ flex: 1, padding: "10px", borderRadius: 10, border: `1px solid ${T.border}`, background: T.surface, color: T.text, cursor: "pointer", fontSize: 13.5, fontWeight: 600 }}>להישאר</button>
-              <button onClick={() => window.history.back()} style={{ flex: 1, padding: "10px", borderRadius: 10, border: "none", background: T.danger, color: "#fff", cursor: "pointer", fontSize: 13.5, fontWeight: 700 }}>כן, לצאת</button>
+              <button onClick={stayInApp} style={{ flex: 1, padding: "10px", borderRadius: 10, border: `1px solid ${T.border}`, background: T.surface, color: T.text, cursor: "pointer", fontSize: 13.5, fontWeight: 600 }}>להישאר</button>
+              <button onClick={() => window.close()} style={{ flex: 1, padding: "10px", borderRadius: 10, border: "none", background: T.danger, color: "#fff", cursor: "pointer", fontSize: 13.5, fontWeight: 700 }}>כן, לצאת</button>
             </div>
           </div>
         </div>
