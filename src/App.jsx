@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import {
   ChevronRight, ChevronLeft, Plus, X, Trash2, Download, CalendarPlus,
   Users, Clock, LogOut, UserCog, Eye, ArrowRight, Copy, Check, Shield,
@@ -863,38 +863,45 @@ function FamilyApp({ family, member, isAdminView, onLogout, onBackToAdmin }) {
 
   const canEdit = member.role === "parent";
 
-  // Establish one "guard" history entry so the very first hardware/gesture
-  // back press is ours to intercept, instead of leaving the app immediately.
-  useEffect(() => { window.history.pushState({ appNav: true }, ""); }, []);
+  // Keep a ref of the latest state, updated every render (not via useEffect,
+  // so there's zero lag) — the popstate listener below is attached ONCE and
+  // reads from this ref, instead of being torn down/recreated on every state
+  // change. Recreating the listener via a dependency array was causing a
+  // race: a fast, repeated back-press could fire before React finished
+  // re-attaching the listener with fresh closures, using stale state.
+  const latest = useRef({});
+  latest.current = { editTask, viewTask, showMembers, view, viewStack };
 
-  // Android/browser back button: close a modal, or step back through the
-  // view history, before ever asking to actually leave the app. Once we're
-  // at the home screen with nothing open, we show a confirmation but
-  // deliberately do NOT re-arm the guard — that way the very next real back
-  // press has nothing left of ours to intercept, and the browser/OS handles
-  // it as a normal exit (the standard "press back again to exit" pattern).
   useEffect(() => {
     const armGuard = () => window.history.pushState({ appNav: true }, "");
+    armGuard(); // establish the first guard entry
+
     const handlePopState = () => {
-      if (editTask) { setEditTask(null); setEditTaskDate(null); armGuard(); return; }
-      if (viewTask) { setViewTask(null); armGuard(); return; }
-      if (showMembers) { setShowMembers(false); armGuard(); return; }
-      if (viewStack.length > 0) {
-        setView(viewStack[viewStack.length - 1]);
-        setViewStack((s) => s.slice(0, -1));
+      const s = latest.current;
+      if (s.editTask) { setEditTask(null); setEditTaskDate(null); armGuard(); return; }
+      if (s.viewTask) { setViewTask(null); armGuard(); return; }
+      if (s.showMembers) { setShowMembers(false); armGuard(); return; }
+      if (s.viewStack.length > 0) {
+        setView(s.viewStack[s.viewStack.length - 1]);
+        setViewStack((prev) => prev.slice(0, -1));
         armGuard();
         return;
       }
-      if (view !== "week") { setView("week"); armGuard(); return; }
+      if (s.view !== "week") { setView("week"); armGuard(); return; }
+      // At home with nothing open: show the confirmation, but deliberately
+      // do NOT re-arm — the very next real back press has nothing left of
+      // ours to intercept, so the browser/OS handles it as a normal exit
+      // (the standard "press back again to exit" pattern).
       setShowExitConfirm(true);
     };
     window.addEventListener("popstate", handlePopState);
     return () => window.removeEventListener("popstate", handlePopState);
-  }, [editTask, viewTask, showMembers, view, viewStack]);
+  }, []);
 
   // Choosing to stay re-arms the guard so future back presses are caught again.
   const stayInApp = () => {
     setShowExitConfirm(false);
+    window.history.pushState({ appNav: true }, "");
     window.history.pushState({ appNav: true }, "");
   };
 
@@ -945,6 +952,26 @@ function FamilyApp({ family, member, isAdminView, onLogout, onBackToAdmin }) {
     if (view === "month") setAnchor(new Date(anchor.getFullYear(), anchor.getMonth() + 1, 1));
     else if (view === "week") setAnchor(addDays(anchor, 7));
     else setAnchor(addDays(anchor, 1));
+  };
+
+  // Swipe left/right on the calendar to move between periods (RTL: swiping
+  // left moves forward in time, matching the prev/next chevron directions
+  // used in the header controls).
+  const touchStartRef = useRef(null);
+  const handleTouchStart = (e) => {
+    const t = e.touches[0];
+    touchStartRef.current = { x: t.clientX, y: t.clientY };
+  };
+  const handleTouchEnd = (e) => {
+    const start = touchStartRef.current;
+    touchStartRef.current = null;
+    if (!start) return;
+    const t = e.changedTouches[0];
+    const dx = t.clientX - start.x;
+    const dy = t.clientY - start.y;
+    if (Math.abs(dx) > 55 && Math.abs(dx) > Math.abs(dy) * 1.4) {
+      if (dx < 0) goNext(); else goPrev();
+    }
   };
 
   const title = useMemo(() => {
@@ -1010,17 +1037,19 @@ function FamilyApp({ family, member, isAdminView, onLogout, onBackToAdmin }) {
           </div>
         </div>
 
-        {!loaded ? (
-          <div style={{ textAlign: "center", padding: 60, color: T.textMuted }}>טוען יומן…</div>
-        ) : view === "month" ? (
-          <MonthView anchor={anchor} tasks={coloredTasks} canEdit={canEdit}
-            onDayClick={(d) => { setAnchor(d); changeView("day"); }}
-            onTaskClick={openTask} onAddDay={openNew} />
-        ) : view === "week" ? (
-          <WeekAgendaView anchor={anchor} tasks={coloredTasks} onTaskClick={openTask} />
-        ) : (
-          <DayView anchor={anchor} tasks={coloredTasks} onTaskClick={openTask} />
-        )}
+        <div onTouchStart={handleTouchStart} onTouchEnd={handleTouchEnd}>
+          {!loaded ? (
+            <div style={{ textAlign: "center", padding: 60, color: T.textMuted }}>טוען יומן…</div>
+          ) : view === "month" ? (
+            <MonthView anchor={anchor} tasks={coloredTasks} canEdit={canEdit}
+              onDayClick={(d) => { setAnchor(d); changeView("day"); }}
+              onTaskClick={openTask} onAddDay={openNew} />
+          ) : view === "week" ? (
+            <WeekAgendaView anchor={anchor} tasks={coloredTasks} onTaskClick={openTask} />
+          ) : (
+            <DayView anchor={anchor} tasks={coloredTasks} onTaskClick={openTask} />
+          )}
+        </div>
 
         <p style={{ fontSize: 11.5, color: T.textMuted, marginTop: 14, lineHeight: 1.7 }}>
           <Clock size={12} style={{ verticalAlign: "-1px" }} /> הנתונים מסונכרנים בזמן אמת (Firestore) לכל בני המשפחה.
