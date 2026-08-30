@@ -896,6 +896,16 @@ function FamilyApp({ family, member, isAdminView, onLogout, onBackToAdmin }) {
     const armGuard = () => window.history.pushState({ appNav: true }, "");
     armGuard(); // establish the first guard entry, as early as possible
 
+    // Safety net: on some Android WebView/browser combinations, a pushState
+    // called immediately on mount doesn't reliably register with the
+    // native back-stack right away — a short delay (which is effectively
+    // what manually tapping something first, like "Today", was doing)
+    // lets it catch up. replaceState (not pushState) so it doesn't add an
+    // extra entry the person would need an extra back press to get past.
+    const resync = setTimeout(() => {
+      window.history.replaceState({ appNav: true }, "");
+    }, 350);
+
     const handlePopState = () => {
       const s = latest.current;
       if (s.editTask) { setEditTask(null); setEditTaskDate(null); armGuard(); return; }
@@ -921,7 +931,7 @@ function FamilyApp({ family, member, isAdminView, onLogout, onBackToAdmin }) {
       setShowExitConfirm(true);
     };
     window.addEventListener("popstate", handlePopState);
-    return () => window.removeEventListener("popstate", handlePopState);
+    return () => { clearTimeout(resync); window.removeEventListener("popstate", handlePopState); };
   }, []);
 
   // Re-center on today whenever the app is reopened / comes back from the
@@ -930,6 +940,10 @@ function FamilyApp({ family, member, isAdminView, onLogout, onBackToAdmin }) {
   useEffect(() => {
     const handleVisibility = () => {
       if (document.visibilityState !== "visible") return;
+      // Re-sync the guard entry too — the same WebView quirk that needs a
+      // delayed nudge on first load can also happen after resuming from
+      // the background.
+      window.history.replaceState({ appNav: true }, "");
       const s = latest.current;
       if (s.view === "day" && s.viewStack.length === 0 && !s.editTask && !s.viewTask && !s.showMembers) {
         setAnchor(todayDate());
