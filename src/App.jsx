@@ -329,10 +329,14 @@ function TimeGrid({ days, tasks, onTaskClick }) {
         </div>
       )}
 
-      <div style={{ display: "grid", gridTemplateColumns: `56px repeat(${days.length},1fr)`, position: "relative", borderTop: `1px solid ${T.border}` }}>
-        <div>
-          {hours.map((h) => (
-            <div key={h} style={{ height: HOUR_H, fontSize: 10.5, color: T.textMuted, textAlign: "center", borderTop: `1px solid ${T.border}`, paddingTop: 2 }}>
+      <div style={{ display: "grid", gridTemplateColumns: `56px repeat(${days.length},1fr)`, position: "relative" }}>
+        <div style={{ position: "relative", height: hours.length * HOUR_H }}>
+          {hours.map((h, idx) => (
+            <div key={h} style={{
+              position: "absolute", top: idx * HOUR_H, insetInlineStart: 0, insetInlineEnd: 0, height: HOUR_H,
+              fontSize: 10.5, color: T.textMuted, textAlign: "center", borderTop: `1px solid ${T.border}`,
+              paddingTop: 2, boxSizing: "border-box",
+            }}>
               {pad(h)}:00
             </div>
           ))}
@@ -341,8 +345,13 @@ function TimeGrid({ days, tasks, onTaskClick }) {
           const dayTasks = tasksForDate(tasks, d);
           const { items, maxCols } = layoutTimedTasks(dayTasks);
           return (
-            <div key={i} style={{ position: "relative", borderRight: `1px solid ${T.border}` }}>
-              {hours.map((h) => <div key={h} style={{ height: HOUR_H, borderTop: `1px solid ${T.border}` }} />)}
+            <div key={i} style={{ position: "relative", borderRight: `1px solid ${T.border}`, height: hours.length * HOUR_H }}>
+              {hours.map((h, idx) => (
+                <div key={h} style={{
+                  position: "absolute", top: idx * HOUR_H, insetInlineStart: 0, insetInlineEnd: 0, height: HOUR_H,
+                  borderTop: `1px solid ${T.border}`, boxSizing: "border-box",
+                }} />
+              ))}
               {items.map(({ task, start, end, col }) => {
                 const top = (start - DAY_START_HOUR * 60) / 60 * HOUR_H;
                 const height = Math.max((end - start) / 60 * HOUR_H, 22);
@@ -841,7 +850,7 @@ function FamilyApp({ family, member, isAdminView, onLogout, onBackToAdmin }) {
   const [tasks, setTasks] = useState([]);
   const [members, setMembers] = useState([]);
   const [loaded, setLoaded] = useState(false);
-  const [view, setView] = useState("day");
+  const [view, setView] = useState("week");
   const [anchor, setAnchor] = useState(todayDate());
   const [editTask, setEditTask] = useState(null);
   const [editTaskDate, setEditTaskDate] = useState(null);
@@ -858,7 +867,7 @@ function FamilyApp({ family, member, isAdminView, onLogout, onBackToAdmin }) {
 
   const goHome = () => {
     setEditTask(null); setEditTaskDate(null); setViewTask(null); setShowMembers(false);
-    setViewStack([]); setView("day"); setAnchor(todayDate());
+    setViewStack([]); setView("week"); setAnchor(todayDate());
   };
 
   const canEdit = member.role === "parent";
@@ -914,12 +923,12 @@ function FamilyApp({ family, member, isAdminView, onLogout, onBackToAdmin }) {
       if (s.viewStack.length > 0) {
         const target = s.viewStack[s.viewStack.length - 1];
         setView(target);
-        if (target === "day") setAnchor(todayDate()); // returning to the calendar -> jump to today
+        if (target === "week") setAnchor(todayDate()); // returning to the calendar -> jump to today
         setViewStack((prev) => prev.slice(0, -1));
         armGuard();
         return;
       }
-      if (s.view !== "day") { setView("day"); setAnchor(todayDate()); armGuard(); return; }
+      if (s.view !== "week") { setView("week"); setAnchor(todayDate()); armGuard(); return; }
       // At home with nothing open: show the confirmation, but deliberately
       // do NOT re-arm — the very next real back press has nothing left of
       // ours to intercept, so the browser/OS handles it as a normal exit
@@ -945,7 +954,7 @@ function FamilyApp({ family, member, isAdminView, onLogout, onBackToAdmin }) {
       // the background.
       window.history.replaceState({ appNav: true }, "");
       const s = latest.current;
-      if (s.view === "day" && s.viewStack.length === 0 && !s.editTask && !s.viewTask && !s.showMembers) {
+      if (s.view === "week" && s.viewStack.length === 0 && !s.editTask && !s.viewTask && !s.showMembers) {
         setAnchor(todayDate());
       }
     };
